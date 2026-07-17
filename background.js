@@ -1,26 +1,58 @@
 // ===== 抖音自动续火花 - 后台 Service Worker =====
-// 职责:
-// 1. Chrome 启动时 / 定时检查,判断"今天是否已经跑过"
-// 2. 若今天还没跑,后台打开抖音标签页并触发内容脚本执行
-// 3. 收到内容脚本汇报后,关闭标签页并记录状态
+
+// ⚠️ 调试开关:true = 每次启动/重载扩展都运行、打开可见标签页、不自动关闭、详细日志。
+//    调试完成后改为 false,即可恢复"每天仅运行一次"。
+const DEBUG = true;
 
 const DOUYIN_URL = "https://www.douyin.com/";
-const RUN_TIMEOUT_MS = 90 * 1000; // 单次运行最长等待 90s,超时强制收尾
+const RUN_TIMEOUT_MS = 120 * 1000;
 
-// ---- 默认设置 ----
 const DEFAULT_SETTINGS = {
-  message: "1", // 要发送的固定消息,默认 "1"
-  enabled: true, // 总开关
-  autoCloseTab: true, // 完成后自动关闭抖音标签页
-  minDelay: 1500, // 每条消息之间的最小间隔(ms)
-  maxDelay: 3500, // 每条消息之间的最大间隔(ms)
-  notify: true, // 完成后弹通知
+  message: "1",
+  enabled: true,
+  autoCloseTab: true,
+  minDelay: 1500,
+  maxDelay: 3500,
+  notify: true,
 };
 
-// 通知图标(复用插件图标)
 const NOTIFY_ICON = chrome.runtime.getURL("icons/icon128.png");
 
-// 组装并弹出完成通知
+// ---- 日志:同时写 console 和 storage(设置页可查看/复制)----
+async function log(line) {
+  const time = new Date().toLocaleTimeString();
+  const entry = `[${time}] ${line}`;
+  console.log("[续火花]", line);
+  try {
+    const { logs = [] } = await chrome.storage.local.get("logs");
+    logs.push(entry);
+    while (logs.length > 500) logs.shift();
+    await chrome.storage.local.set({ logs });
+  } catch (e) {}
+}
+
+async function getSettings() {
+  const { settings } = await chrome.storage.local.get("settings");
+  return { ...DEFAULT_SETTINGS, ...(settings || {}) };
+}
+
+function todayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+}
+
+async function alreadyRanToday() {
+  const { lastRunDate } = await chrome.storage.local.get("lastRunDate");
+  return lastRunDate === todayStr();
+}
+
+async function setLastRun(info) {
+  await chrome.storage.local.set({
+    lastRunDate: todayStr(),
+    lastRunInfo: { time: new Date().toLocaleString(), ...info },
+  });
+}
+
 function showNotification(result) {
   const names = result.names || [];
   const count = result.sent || names.length;
@@ -45,135 +77,96 @@ function showNotification(result) {
   });
 }
 
-async function getSettings() {
-  const { settings } = await chrome.storage.local.get("settings");
-  return { ...DEFAULT_SETTINGS, ...(settings || {}) };
-}
-
-// 本地时区的 "YYYY-M-D",用来做每日去重
-function todayStr() {
-  const d = new Date();
-  return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
-}
-
-async function alreadyRanToday() {
-  const { lastRunDate } = await chrome.storage.local.get("lastRunDate");
-  return lastRunDate === todayStr();
-}
-
-async function setLastRun(info) {
-  await chrome.storage.local.set({
-    lastRunDate: todayStr(),
-    lastRunInfo: { time: new Date().toLocaleString(), ...info },
-  });
-}
-
-// ---- 核心:执行一次续火花 ----
-async function runFireStreak(force = false) {
+// ---- 核心 ----
+async function runFireStreak(trigger = "unknown", force = false) {
   const settings = await getSettings();
+  await log(`触发运行 (来源=${trigger}, force=${force}, DEBUG=${DEBUG})`);
+
   if (!settings.enabled && !force) {
-    console.log("[续火花] 已被禁用,跳过");
+    await log("总开关关闭,跳过");
     return { skipped: true, reason: "disabled" };
   }
-  if (!force && (await alreadyRanToday())) {
-    console.log("[续火花] 今天已经跑过,跳过");
+  if (!DEBUG && !force && (await alreadyRanToday())) {
+    await log("今天已经跑过,跳过");
     return { skipped: true, reason: "already-ran" };
   }
 
-  console.log("[续火花] 开始执行…");
+  // 设置待执行标记,内容脚本加载后会读取并自动执行(比 sendMessage 更抗时序问题)
+  await chrome.storage.local.set({
+    pendingRun: { settings, ts: Date.now() },
+  });
 
-  // 在后台打开抖音(active:false 不抢焦点,尽量无感)
-  const tab = await chrome.tabs.create({ url: DOUYIN_URL, active: false });
+  const active = DEBUG ? true : false;
+  const tab = await chrome.tabs.create({ url: DOUYIN_URL, active });
+  await log(`已打开抖音标签页 (id=${tab.id}, active=${active})`);
 
   const result = await driveTab(tab.id, settings);
 
-  if (settings.autoCloseTab) {
+  await chrome.storage.local.remove("pendingRun");
+
+  if (settings.autoCloseTab && !DEBUG) {
     try {
       await chrome.tabs.remove(tab.id);
-    } catch (e) {
-      /* 标签页可能已被用户关闭 */
-    }
+      await log("已关闭抖音标签页");
+    } catch (e) {}
+  } else if (DEBUG) {
+    await log("DEBUG 模式:保留标签页,方便你 F12 查看");
   }
 
   await setLastRun(result);
   if (settings.notify && !result.skipped) showNotification(result);
-  console.log("[续火花] 完成:", result);
+  await log("运行完成: " + JSON.stringify(result));
   return result;
 }
 
-// 等待标签页加载完成,给内容脚本发指令,等待其汇报结果
+// 等待内容脚本汇报结果(带超时兜底)
 function driveTab(tabId, settings) {
   return new Promise((resolve) => {
     let done = false;
-
     const finish = (res) => {
       if (done) return;
       done = true;
-      chrome.tabs.onUpdated.removeListener(onUpdated);
       chrome.runtime.onMessage.removeListener(onReport);
       clearTimeout(timer);
       resolve(res);
     };
+    const timer = setTimeout(() => {
+      log("等待内容脚本超时(120s)。可能是页面没加载出会话列表,或内容脚本未注入。");
+      finish({ ok: false, error: "timeout", sent: 0, names: [] });
+    }, RUN_TIMEOUT_MS);
 
-    // 超时兜底
-    const timer = setTimeout(
-      () => finish({ ok: false, error: "timeout", sent: 0 }),
-      RUN_TIMEOUT_MS
-    );
-
-    // 内容脚本执行完会通过 runtime 消息汇报
     const onReport = (msg, sender) => {
       if (sender.tab && sender.tab.id === tabId && msg.type === "fire-report") {
         finish(msg.payload);
       }
     };
     chrome.runtime.onMessage.addListener(onReport);
-
-    // 页面加载完成后,给内容脚本下达执行指令
-    const onUpdated = (id, changeInfo) => {
-      if (id === tabId && changeInfo.status === "complete") {
-        // 稍等页面动态内容渲染
-        setTimeout(() => {
-          chrome.tabs.sendMessage(
-            tabId,
-            { action: "runFire", settings },
-            () => void chrome.runtime.lastError // 忽略"接收端不存在"的报错
-          );
-        }, 3000);
-      }
-    };
-    chrome.tabs.onUpdated.addListener(onUpdated);
   });
 }
 
 // ---- 触发时机 ----
+chrome.runtime.onStartup.addListener(() => runFireStreak("onStartup"));
 
-// Chrome 冷启动(每天第一次打开浏览器通常会触发)
-chrome.runtime.onStartup.addListener(() => {
-  console.log("[续火花] onStartup 触发");
-  runFireStreak();
-});
-
-// 安装/更新时建一个每小时的闹钟,兜底"Chrome 常年不关"的情况
 chrome.runtime.onInstalled.addListener(() => {
   chrome.alarms.create("dailyCheck", { periodInMinutes: 60 });
+  // 调试期:重新加载扩展也立刻跑一次
+  if (DEBUG) runFireStreak("onInstalled");
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === "dailyCheck") {
-    runFireStreak(); // 内部会判断今天是否已跑过
-  }
+  if (alarm.name === "dailyCheck") runFireStreak("alarm");
 });
 
-// 点击工具栏图标 → 打开设置页
-chrome.action.onClicked.addListener(() => {
-  chrome.runtime.openOptionsPage();
-});
+chrome.action.onClicked.addListener(() => chrome.runtime.openOptionsPage());
 
-// 来自设置页的手动指令(测试运行)
+// ---- 来自内容脚本 / 设置页的消息 ----
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type === "log") {
+    log("[页面] " + msg.line);
+    return;
+  }
   if (msg.action === "manualRun") {
-    runFireStreak(true).then(sendResponse);
-    return true; // 异步响应
+    runFireStreak("manual", true).then(sendResponse);
+    return true;
   }
 });

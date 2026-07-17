@@ -67,31 +67,4 @@ $("run").addEventListener("click", async () => {
   });
 });
 
-// ---- 运行日志 ----
-async function loadLogs() {
-  const { logs = [] } = await chrome.storage.local.get("logs");
-  const ta = $("log");
-  ta.value = logs.join("\n");
-  ta.scrollTop = ta.scrollHeight;
-}
-
-$("refreshLog").addEventListener("click", loadLogs);
-
-$("copyLog").addEventListener("click", async () => {
-  await navigator.clipboard.writeText($("log").value || "");
-  showStatus("📋 日志已复制");
-});
-
-$("clearLog").addEventListener("click", async () => {
-  await chrome.storage.local.set({ logs: [] });
-  loadLogs();
-  showStatus("🗑 日志已清空");
-});
-
-// 日志变化时自动刷新面板
-chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "local" && changes.logs) loadLogs();
-});
-
 load();
-loadLogs();

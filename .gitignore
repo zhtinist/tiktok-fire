@@ -1,3 +1,7 @@
 .DS_Store
 node_modules/
 *.log
+
+# 私钥,切勿提交/公开
+*.pem
+*.crx

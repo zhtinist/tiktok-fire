@@ -42,14 +42,6 @@ const CONFIG = {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const rand = (min, max) => Math.floor(min + Math.random() * (max - min));
 
-// 日志:打到本页 console,并转发给后台统一收集(设置页可查看)
-function clog(line) {
-  console.log("[续火花/页面]", line);
-  try {
-    chrome.runtime.sendMessage({ type: "log", line });
-  } catch (e) {}
-}
-
 // 依次尝试一组选择器,返回第一个命中的元素
 function pick(selectors, root = document) {
   for (const sel of selectors) {
@@ -166,20 +158,18 @@ function findByText(keywords) {
 
 // 尝试进入私信/消息页面
 async function openMessages() {
-  const already = pickAll(CONFIG.conversationItem).length;
-  clog(`初始会话项命中数: ${already}`);
-  if (already) return true;
+  // 如果已经在消息页(能找到会话项),直接返回
+  if (pickAll(CONFIG.conversationItem).length) return true;
 
   const entry = pick(CONFIG.messageEntry);
-  clog(`私信入口: ${entry ? "找到,点击进入" : "未找到(将直接等待列表)"}`);
   if (entry) {
     entry.click();
     await sleep(2500);
   }
+  // 等待会话列表出现
   const ok = await waitFor(() => pickAll(CONFIG.conversationItem).length > 0, {
     timeout: 15000,
   });
-  clog(`等待会话列表结果: ${ok ? "出现" : "超时未出现"}`);
   return !!ok;
 }
 
@@ -192,12 +182,9 @@ async function run(settings) {
   const report = { ok: false, sent: 0, matched: 0, names: [], error: null };
 
   try {
-    clog(`当前页面: ${location.href}`);
-    clog(`将要发送的消息: "${message}"`);
     const entered = await openMessages();
     if (!entered) {
       report.error = "找不到私信/会话列表(可能未登录,或选择器需更新)";
-      clog("❌ " + report.error);
       return report;
     }
 
@@ -206,11 +193,7 @@ async function run(settings) {
 
     // 最多循环若干轮,防止列表虚拟滚动导致漏掉
     for (let round = 0; round < 3; round++) {
-      const allItems = pickAll(CONFIG.conversationItem);
-      const items = allItems.filter(hasFlame);
-      clog(
-        `第 ${round + 1} 轮:会话总数 ${allItems.length},带火花 ${items.length}`
-      );
+      const items = pickAll(CONFIG.conversationItem).filter(hasFlame);
       report.matched = Math.max(report.matched, items.length);
 
       let progressed = false;
@@ -221,21 +204,16 @@ async function run(settings) {
         progressed = true;
 
         const name = extractName(item);
-        clog(`→ 打开会话: ${name}`);
         item.click();
         await sleep(1500);
 
         // 找到输入框
         const input = await waitFor(() => pick(CONFIG.chatInput), { timeout: 8000 });
-        if (!input) {
-          clog(`  ✗ 未找到输入框,跳过 ${name}`);
-          continue;
-        }
+        if (!input) continue;
 
         typeInto(input, message);
         await sleep(500);
-        const sent = doSend(input, input.closest('[class*="chat"], [class*="conversation"]'));
-        clog(`  ✓ 已向 ${name} 发送(方式=${sent ? "ok" : "fail"})`);
+        doSend(input, input.closest('[class*="chat"], [class*="conversation"]'));
         report.sent++;
         report.names.push(name);
 
@@ -258,38 +236,14 @@ async function run(settings) {
   return report;
 }
 
-// ---- 触发 ----
-let running = false;
-async function doRun(settings) {
-  if (running) return;
-  running = true;
-  try {
-    const report = await run(settings);
-    chrome.runtime.sendMessage({ type: "fire-report", payload: report });
-  } finally {
-    running = false;
+// ---- 监听后台指令 ----
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.action === "runFire") {
+    run(msg.settings).then((report) => {
+      // 汇报给后台
+      chrome.runtime.sendMessage({ type: "fire-report", payload: report });
+      sendResponse(report);
+    });
+    return true; // 异步
   }
-}
-
-// 页面加载后,检查后台留下的"待执行"标记(抗时序问题的主触发方式)
-async function checkPending() {
-  // 只在顶层框架、且是抖音主站执行
-  if (window.top !== window.self) return;
-  if (!/douyin\.com$/.test(location.hostname)) return;
-  try {
-    const { pendingRun } = await chrome.storage.local.get("pendingRun");
-    if (pendingRun && Date.now() - pendingRun.ts < 120000) {
-      clog("检测到待执行标记,开始自动执行");
-      await chrome.storage.local.remove("pendingRun");
-      doRun(pendingRun.settings);
-    }
-  } catch (e) {
-    clog("checkPending 出错: " + e);
-  }
-}
-checkPending();
-
-// 保留手动指令入口
-chrome.runtime.onMessage.addListener((msg) => {
-  if (msg.action === "runFire") doRun(msg.settings);
 });
