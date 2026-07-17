@@ -239,28 +239,47 @@ function typeInto(el, text) {
   }
 }
 
-// 触发发送:优先点可点击的发送按钮,否则在输入框上派发回车
-function doSend(inputEl) {
-  // 1) 找一个"真的能点"的发送按钮(防 DOM clobbering 导致 click 不是函数)
-  let btn = null;
-  for (const sel of CONFIG.sendButton) {
-    try {
-      const e = document.querySelector(sel);
-      if (e && typeof e.click === "function") {
-        btn = e;
-        break;
-      }
-    } catch (err) {}
-  }
-  if (!btn) {
-    const t = findByText(CONFIG.sendButtonText);
-    if (t && typeof t.click === "function") btn = t;
-  }
+// 取右侧消息面板容器(限定搜索范围,避免误点左侧搜索框相关元素)
+function rightPanel() {
+  return (
+    document.querySelector('[class*="RightPanel"], [class*="rightPanel"]') || document
+  );
+}
+
+// 从输入容器里取真正的可编辑节点(Enter/打字都要作用在它上面)
+function findEditable(container) {
+  return (
+    (container && container.querySelector && container.querySelector('[contenteditable="true"]')) ||
+    rightPanel().querySelector('[data-e2e="msg-input"] [contenteditable="true"]') ||
+    rightPanel().querySelector('[contenteditable="true"]') ||
+    document.querySelector('[contenteditable="true"]')
+  );
+}
+
+// 触发发送:优先"真实点击"发送按钮,否则在可编辑节点上派发回车
+function doSend(container) {
+  const panel = rightPanel();
+
+  // 1) 发送按钮:先精确类名,再退到面板内可见的含 send 元素
+  let btn =
+    panel.querySelector(
+      '[data-e2e="msg-send"], [class*="sendBtn"], [class*="SendBtn"], [class*="sendButton"], [class*="SendButton"], [class*="sendMsg"]'
+    ) ||
+    Array.from(panel.querySelectorAll('[class*="send"], [class*="Send"]')).find((e) => {
+      const r = e.getBoundingClientRect();
+      return r.width > 0 && r.height > 0; // 可见
+    });
   if (btn) {
-    btn.click();
-    return "button";
+    realClick(btn);
+    const c = typeof btn.className === "string" ? btn.className.slice(0, 50) : btn.tagName;
+    return "button(" + c + ")";
   }
-  // 2) 回退:在输入框上派发回车(keydown 通常足够触发发送)
+
+  // 2) 回退:在真正的可编辑节点上派发 Enter
+  const ed = findEditable(container) || container;
+  try {
+    ed.focus();
+  } catch (e) {}
   const opts = {
     key: "Enter",
     code: "Enter",
@@ -270,7 +289,7 @@ function doSend(inputEl) {
     cancelable: true,
   };
   for (const type of ["keydown", "keypress", "keyup"]) {
-    inputEl.dispatchEvent(new KeyboardEvent(type, opts));
+    ed.dispatchEvent(new KeyboardEvent(type, opts));
   }
   return "enter";
 }
@@ -304,15 +323,19 @@ function diagnoseChat(tag) {
     );
   });
 
-  // "发送"文字元素
-  const sendEls = Array.from(document.querySelectorAll('button, [role="button"], span, div'))
-    .filter((e) => {
-      const t = (e.innerText || "").trim();
-      return t.length <= 6 && t.includes("发送");
-    })
-    .slice(0, 5);
-  clog(`含"发送"文字的元素: ${sendEls.length}`);
-  sendEls.forEach((e, i) => clog(`发送候选#${i} <${e.tagName.toLowerCase()}> ${classChain(e, 4)}`));
+  // dump 输入区完整 HTML(含发送按钮)
+  const msgInput = document.querySelector('[data-e2e="msg-input"]');
+  const box = msgInput ? msgInput.parentElement || msgInput : null;
+  if (box) {
+    clog(`输入区容器 outerHTML(截断4000): ${(box.outerHTML || "").replace(/\s+/g, " ").slice(0, 4000)}`);
+  }
+
+  // 所有含 send 的元素(找发送按钮)
+  const sendEls = Array.from(document.querySelectorAll('[class*="send"], [class*="Send"]')).slice(0, 6);
+  clog(`含 send 类名的元素: ${sendEls.length}`);
+  sendEls.forEach((e, i) =>
+    clog(`send元素#${i} <${e.tagName.toLowerCase()}> ${classChain(e, 3)} | ${(e.outerHTML || "").replace(/\s+/g, " ").slice(0, 200)}`)
+  );
 }
 
 // 从会话项里尽量提取"好友昵称"
@@ -420,10 +443,11 @@ async function run(settings) {
         continue;
       }
 
-      typeInto(input, message);
+      const editable = findEditable(input) || input;
+      typeInto(editable, message);
       await sleep(300);
       const how = doSend(input);
-      await sleep(400);
+      await sleep(500);
       clog(`  ✓ 已向 ${name} 发送(方式=${how})`);
       report.sent++;
       report.names.push(name);
