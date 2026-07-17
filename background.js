@@ -4,7 +4,7 @@
 //    调试完成后改为 false,即可恢复"每天仅运行一次"。
 const DEBUG = true;
 
-const DOUYIN_URL = "https://www.douyin.com/";
+const DOUYIN_URL = "https://www.douyin.com/chat";
 const RUN_TIMEOUT_MS = 120 * 1000;
 
 const DEFAULT_SETTINGS = {

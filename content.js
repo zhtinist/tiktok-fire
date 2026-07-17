@@ -81,20 +81,91 @@ async function waitFor(fn, { timeout = 15000, interval = 400 } = {}) {
   return null;
 }
 
-// 判断一个会话元素是否带火花
+const FLAME_CLASS_RE = /fire|flame|huohua|spark/i;
+
+// 判断一个会话元素是否带火花(续火花中)
 function hasFlame(el) {
+  const cls = typeof el.className === "string" ? el.className : "";
+  if (FLAME_CLASS_RE.test(cls)) return true;
+
   const text = (el.innerText || "") + " " + (el.getAttribute("aria-label") || "");
   if (CONFIG.flameKeywords.some((k) => text.includes(k))) return true;
-  // 兜底:看有没有 img/svg 的 alt/title 带火花
-  const imgs = el.querySelectorAll("img, svg, [aria-label], [title]");
+
+  // 子元素 class 里带 火花/fire 特征
+  if (el.querySelector('[class*="fire"], [class*="flame"], [class*="huohua"], [class*="spark"]'))
+    return true;
+
+  // img/svg 的 alt/title/aria-label/src 带火花特征
+  const imgs = el.querySelectorAll("img, svg, [aria-label], [title], [alt]");
   for (const n of imgs) {
     const meta =
       (n.getAttribute("alt") || "") +
       (n.getAttribute("title") || "") +
-      (n.getAttribute("aria-label") || "");
-    if (CONFIG.flameKeywords.some((k) => meta.includes(k))) return true;
+      (n.getAttribute("aria-label") || "") +
+      (n.getAttribute("src") || "");
+    if (CONFIG.flameKeywords.some((k) => meta.includes(k)) || FLAME_CLASS_RE.test(meta))
+      return true;
   }
   return false;
+}
+
+// 打印元素的祖先 class 链,便于远程定位选择器
+function classChain(el, levels = 7) {
+  const parts = [];
+  let n = el;
+  for (let i = 0; i < levels && n && n !== document.body; i++) {
+    const cls =
+      typeof n.className === "string"
+        ? n.className.trim().split(/\s+/).slice(0, 3).join(".")
+        : "";
+    parts.push(n.tagName.toLowerCase() + (cls ? "." + cls : ""));
+    n = n.parentElement;
+  }
+  return parts.join("  <  ");
+}
+
+// DOM 诊断:识别失败时把真实结构写进日志,供远程排查
+function diagnose() {
+  clog("—— DOM 诊断开始 ——");
+  CONFIG.conversationItem.forEach((sel) => {
+    let c = 0;
+    try {
+      c = document.querySelectorAll(sel).length;
+    } catch (e) {}
+    clog(`会话选择器 [${sel}] 命中 ${c}`);
+  });
+
+  // 疑似火花元素(class 命中 或 文本含🔥)
+  const fireEls = [];
+  const all = document.querySelectorAll("*");
+  for (const el of all) {
+    if (fireEls.length >= 6) break;
+    const cls = typeof el.className === "string" ? el.className : "";
+    const hasFireText = Array.from(el.childNodes).some(
+      (n) => n.nodeType === 3 && /🔥|火花/.test(n.nodeValue || "")
+    );
+    const meta =
+      (el.getAttribute && (el.getAttribute("alt") || el.getAttribute("aria-label"))) || "";
+    if (FLAME_CLASS_RE.test(cls) || hasFireText || FLAME_CLASS_RE.test(meta)) {
+      fireEls.push(el);
+    }
+  }
+  clog(`疑似火花元素: ${fireEls.length} 个`);
+  fireEls.forEach((el, i) => {
+    clog(`火花#${i} 链路: ${classChain(el)}`);
+    const row = el.closest("li, a, [role='listitem']") || el.parentElement?.parentElement;
+    if (row) {
+      const html = (row.outerHTML || "").replace(/\s+/g, " ").slice(0, 700);
+      clog(`火花#${i} 所在行 outerHTML(截断): ${html}`);
+    }
+  });
+
+  // 常见容器统计
+  ["conversation", "session", "chat", "card", "item", "list"].forEach((kw) => {
+    const c = document.querySelectorAll(`[class*="${kw}"]`).length;
+    if (c) clog(`class 含 "${kw}" 的元素: ${c}`);
+  });
+  clog("—— DOM 诊断结束 ——");
 }
 
 // 在 contenteditable / textarea 里写入文本并触发框架的 input 事件
@@ -198,6 +269,7 @@ async function run(settings) {
     if (!entered) {
       report.error = "找不到私信/会话列表(可能未登录,或选择器需更新)";
       clog("❌ " + report.error);
+      diagnose();
       return report;
     }
 
@@ -212,6 +284,12 @@ async function run(settings) {
         `第 ${round + 1} 轮:会话总数 ${allItems.length},带火花 ${items.length}`
       );
       report.matched = Math.max(report.matched, items.length);
+
+      // 找到了会话但没识别到火花 → 诊断一次(只在第一轮)
+      if (round === 0 && allItems.length > 0 && items.length === 0) {
+        clog("有会话但未识别到火花,输出诊断:");
+        diagnose();
+      }
 
       let progressed = false;
       for (const item of items) {
