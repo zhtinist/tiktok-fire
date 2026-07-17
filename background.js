@@ -1,8 +1,9 @@
 // ===== 抖音自动续火花 - 后台 Service Worker =====
 
-// ⚠️ 调试开关:true = 每次启动/重载扩展都运行、打开可见标签页、不自动关闭、详细日志。
-//    调试完成后改为 false,即可恢复"每天仅运行一次"。
-const DEBUG = true;
+// ⚠️ 调试开关:
+//   true  = 每次启动/重载都运行、打开"可见"标签页、不自动关闭、每次导出日志文件。
+//   false = 生产模式:每天仅首次运行、"后台静默"标签页(不抢焦点)、完成自动关闭、不弹下载。
+const DEBUG = false;
 
 const DOUYIN_URL = "https://www.douyin.com/chat";
 const RUN_TIMEOUT_MS = 120 * 1000;
@@ -145,7 +146,8 @@ async function runFireStreak(trigger = "unknown", force = false) {
   await setLastRun(result);
   if (settings.notify && !result.skipped) showNotification(result);
   await log("运行完成: " + JSON.stringify(result));
-  await exportLogs(); // 自动把日志写到下载目录的固定文件
+  // 仅调试模式自动导出日志文件(生产模式保持静默,不触发下载)
+  if (DEBUG) await exportLogs();
   return result;
 }
 
