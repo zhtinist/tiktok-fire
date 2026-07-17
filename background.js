@@ -204,3 +204,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 });
+
+// 调试期:Service Worker 一启动(含重新加载扩展)就跑一次,带 30s 冷却防重复
+if (DEBUG) {
+  (async () => {
+    try {
+      const { lastAutoRun = 0 } = await chrome.storage.local.get("lastAutoRun");
+      if (Date.now() - lastAutoRun < 30000) return;
+      await chrome.storage.local.set({ lastAutoRun: Date.now() });
+      runFireStreak("sw-startup");
+    } catch (e) {}
+  })();
+}
