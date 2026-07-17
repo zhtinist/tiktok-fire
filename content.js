@@ -191,6 +191,36 @@ function diagnose() {
   clog("—— DOM 诊断结束 ——");
 }
 
+// 用真实鼠标事件序列点击(比 el.click() 更能触发框架的 onClick)
+function realClick(el) {
+  try {
+    el.scrollIntoView({ block: "center" });
+  } catch (e) {}
+  const r = el.getBoundingClientRect();
+  const base = {
+    bubbles: true,
+    cancelable: true,
+    view: window,
+    clientX: r.left + r.width / 2,
+    clientY: r.top + r.height / 2,
+    button: 0,
+  };
+  for (const type of [
+    "pointerover",
+    "pointerdown",
+    "mousedown",
+    "pointerup",
+    "mouseup",
+    "click",
+  ]) {
+    try {
+      const E =
+        type.startsWith("pointer") && window.PointerEvent ? PointerEvent : MouseEvent;
+      el.dispatchEvent(new E(type, base));
+    } catch (e) {}
+  }
+}
+
 // 在 contenteditable / textarea 里写入文本并触发框架的 input 事件
 function typeInto(el, text) {
   el.focus();
@@ -249,37 +279,40 @@ function doSend(inputEl) {
 let chatDiagnosed = false;
 function diagnoseChat(tag) {
   clog(`—— 聊天区诊断(${tag})——`);
-  const editables = document.querySelectorAll('[contenteditable="true"]');
-  const tas = document.querySelectorAll("textarea");
-  clog(`contenteditable: ${editables.length} 个, textarea: ${tas.length} 个`);
+  clog(
+    `contenteditable=${document.querySelectorAll('[contenteditable="true"]').length}, ` +
+      `textarea=${document.querySelectorAll("textarea").length}, ` +
+      `input标签=${document.querySelectorAll("input").length}`
+  );
 
-  const input = pick(CONFIG.chatInput);
-  if (input) {
-    clog(`输入框链路: ${classChain(input)}`);
-    let box = input;
-    for (let i = 0; i < 5 && box.parentElement; i++) box = box.parentElement;
-    clog(`输入区容器 outerHTML(截断3000): ${(box.outerHTML || "").replace(/\s+/g, " ").slice(0, 3000)}`);
-  } else {
-    clog("未找到输入框");
-    // dump 页面右侧/底部可能的输入容器
-    ["input", "editor", "footer", "send"].forEach((kw) => {
+  // 关键词类名分布(看聊天面板/输入区有没有渲染出来)
+  ["input", "Input", "editor", "Editor", "send", "Send", "message", "Message", "msg", "footer", "bubble"].forEach(
+    (kw) => {
       const c = document.querySelectorAll(`[class*="${kw}"]`).length;
-      if (c) clog(`class 含 "${kw}" 的元素: ${c}`);
-    });
-  }
+      if (c) clog(`class含"${kw}": ${c}`);
+    }
+  );
 
-  const sendEls = Array.from(
-    document.querySelectorAll('button, [role="button"], span, div')
-  )
+  // dump 可能是输入框的元素
+  const cands = Array.from(
+    document.querySelectorAll('[contenteditable], [class*="input"], [class*="Input"], [class*="editor"], [class*="Editor"]')
+  ).slice(0, 8);
+  cands.forEach((e, i) => {
+    clog(
+      `输入候选#${i} <${e.tagName.toLowerCase()} ce=${e.getAttribute("contenteditable")}> ` +
+        `${classChain(e, 4)} | html:${(e.outerHTML || "").replace(/\s+/g, " ").slice(0, 200)}`
+    );
+  });
+
+  // "发送"文字元素
+  const sendEls = Array.from(document.querySelectorAll('button, [role="button"], span, div'))
     .filter((e) => {
       const t = (e.innerText || "").trim();
-      return t === "发送" || (t.length <= 6 && t.includes("发送"));
+      return t.length <= 6 && t.includes("发送");
     })
     .slice(0, 5);
   clog(`含"发送"文字的元素: ${sendEls.length}`);
-  sendEls.forEach((e, i) =>
-    clog(`发送候选#${i} <${e.tagName.toLowerCase()}> 链路: ${classChain(e)}`)
-  );
+  sendEls.forEach((e, i) => clog(`发送候选#${i} <${e.tagName.toLowerCase()}> ${classChain(e, 4)}`));
 }
 
 // 从会话项里尽量提取"好友昵称"
@@ -348,68 +381,52 @@ async function run(settings) {
       return report;
     }
 
-    // 收集带火花的会话。因为点进去会话列表会重排,这里先记录命中的"文本指纹"用于去重。
-    const seen = new Set();
+    // 硬性截止时间:整个发送过程不超过 ~9.5 秒
+    const deadline = Date.now() + 9500;
 
-    // 最多循环若干轮,防止列表虚拟滚动导致漏掉
-    for (let round = 0; round < 3; round++) {
-      const allItems = pickAll(CONFIG.conversationItem);
-      const items = allItems.filter(hasFlame);
-      clog(
-        `第 ${round + 1} 轮:会话总数 ${allItems.length},带火花 ${items.length}`
-      );
-      report.matched = Math.max(report.matched, items.length);
+    const allItems = pickAll(CONFIG.conversationItem);
+    const items = allItems.filter(hasFlame);
+    clog(`会话总数 ${allItems.length},带火花 ${items.length}`);
+    report.matched = items.length;
 
-      // 找到了会话但没识别到火花 → 诊断一次(只在第一轮)
-      if (round === 0 && allItems.length > 0 && items.length === 0) {
-        clog("有会话但未识别到火花,输出诊断:");
-        diagnose();
+    if (allItems.length > 0 && items.length === 0) {
+      clog("有会话但未识别到火花,输出诊断:");
+      diagnose();
+    }
+
+    for (const item of items) {
+      if (Date.now() > deadline) {
+        clog("⏱ 已到 9.5s 截止,停止后续会话");
+        break;
+      }
+      const name = extractName(item);
+      clog(`→ 打开会话: ${name}`);
+      realClick(item);
+
+      // 等输入框出现(最多 2.5s)
+      const input = await waitFor(() => pick(CONFIG.chatInput), {
+        timeout: 2500,
+        interval: 250,
+      });
+
+      // 首个会话做一次聊天区诊断
+      if (!chatDiagnosed) {
+        chatDiagnosed = true;
+        diagnoseChat(input ? "已找到输入框" : "未找到输入框");
       }
 
-      let progressed = false;
-      for (const item of items) {
-        const fingerprint = (item.innerText || "").slice(0, 40).trim();
-        if (seen.has(fingerprint)) continue;
-        seen.add(fingerprint);
-        progressed = true;
-
-        const name = extractName(item);
-        clog(`→ 打开会话: ${name}`);
-        item.click();
-        await sleep(2500);
-
-        // 找到输入框
-        const input = await waitFor(() => pick(CONFIG.chatInput), { timeout: 10000 });
-
-        // 第一个会话打开后做一次聊天区诊断(定位输入框/发送按钮)
-        if (!chatDiagnosed) {
-          chatDiagnosed = true;
-          diagnoseChat(input ? "已找到输入框" : "未找到输入框");
-        }
-
-        if (!input) {
-          clog(`  ✗ 未找到输入框,跳过 ${name}`);
-          continue;
-        }
-
-        typeInto(input, message);
-        await sleep(600);
-        const how = doSend(input);
-        await sleep(800);
-        clog(`  ✓ 已向 ${name} 发送(方式=${how})`);
-        report.sent++;
-        report.names.push(name);
-
-        await sleep(rand(minDelay, maxDelay)); // 拟人化间隔
+      if (!input) {
+        clog(`  ✗ 未找到输入框,跳过 ${name}`);
+        continue;
       }
 
-      if (!progressed) break;
-      // 滚动会话列表加载更多
-      const list = pick(CONFIG.conversationItem)?.parentElement;
-      if (list) {
-        list.scrollTop = list.scrollHeight;
-        await sleep(1500);
-      }
+      typeInto(input, message);
+      await sleep(300);
+      const how = doSend(input);
+      await sleep(400);
+      clog(`  ✓ 已向 ${name} 发送(方式=${how})`);
+      report.sent++;
+      report.names.push(name);
     }
 
     report.ok = true;

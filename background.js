@@ -179,8 +179,6 @@ chrome.runtime.onStartup.addListener(() => runFireStreak("onStartup"));
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.alarms.create("dailyCheck", { periodInMinutes: 60 });
-  // 调试期:重新加载扩展也立刻跑一次
-  if (DEBUG) runFireStreak("onInstalled");
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
