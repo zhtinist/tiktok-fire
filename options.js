@@ -82,6 +82,12 @@ $("copyLog").addEventListener("click", async () => {
   showStatus("📋 日志已复制");
 });
 
+$("exportLog").addEventListener("click", () => {
+  chrome.runtime.sendMessage({ action: "exportLogs" }, () => {
+    showStatus("💾 已导出到下载目录/tiktok-fire-log.txt");
+  });
+});
+
 $("clearLog").addEventListener("click", async () => {
   await chrome.storage.local.set({ logs: [] });
   loadLogs();

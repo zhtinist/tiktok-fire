@@ -31,6 +31,27 @@ async function log(line) {
   } catch (e) {}
 }
 
+// 把全部日志导出成下载目录里的固定文件(覆盖写),方便自动读取
+const LOG_FILENAME = "tiktok-fire-log.txt";
+async function exportLogs() {
+  try {
+    const { logs = [] } = await chrome.storage.local.get("logs");
+    const header =
+      `# 抖音自动续火花 运行日志\n# 导出时间: ${new Date().toLocaleString()}\n` +
+      `# 文件位置: 浏览器下载目录/${LOG_FILENAME}\n\n`;
+    const text = header + logs.join("\n");
+    const url = "data:text/plain;charset=utf-8," + encodeURIComponent(text);
+    await chrome.downloads.download({
+      url,
+      filename: LOG_FILENAME,
+      saveAs: false,
+      conflictAction: "overwrite",
+    });
+  } catch (e) {
+    console.log("[续火花] 导出日志失败:", e);
+  }
+}
+
 async function getSettings() {
   const { settings } = await chrome.storage.local.get("settings");
   return { ...DEFAULT_SETTINGS, ...(settings || {}) };
@@ -116,6 +137,7 @@ async function runFireStreak(trigger = "unknown", force = false) {
   await setLastRun(result);
   if (settings.notify && !result.skipped) showNotification(result);
   await log("运行完成: " + JSON.stringify(result));
+  await exportLogs(); // 自动把日志写到下载目录的固定文件
   return result;
 }
 
@@ -167,6 +189,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg.action === "manualRun") {
     runFireStreak("manual", true).then(sendResponse);
+    return true;
+  }
+  if (msg.action === "exportLogs") {
+    exportLogs().then(() => sendResponse({ ok: true }));
     return true;
   }
 });

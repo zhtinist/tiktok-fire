@@ -3,7 +3,7 @@
   "name": "抖音自动续火花",
   "version": "1.0.0",
   "description": "每天首次打开 Chrome 时,自动给所有有火花的好友发送一条固定消息,续上火花。全程后台无感。",
-  "permissions": ["storage", "tabs", "alarms", "scripting", "notifications"],
+  "permissions": ["storage", "tabs", "alarms", "scripting", "notifications", "downloads"],
   "host_permissions": ["https://www.douyin.com/*", "https://*.douyin.com/*"],
   "background": {
     "service_worker": "background.js"
