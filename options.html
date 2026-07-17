@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>抖音自动续火花 · 设置</title>
+    <style>
+      body {
+        font-family: -apple-system, "PingFang SC", sans-serif;
+        max-width: 480px;
+        margin: 32px auto;
+        padding: 0 20px;
+        color: #1a1a1a;
+      }
+      h1 { font-size: 20px; }
+      .row { margin: 18px 0; }
+      label { display: block; font-weight: 600; margin-bottom: 6px; }
+      input[type="text"], input[type="number"] {
+        width: 100%;
+        padding: 8px 10px;
+        border: 1px solid #ccc;
+        border-radius: 8px;
+        box-sizing: border-box;
+        font-size: 14px;
+      }
+      .inline { display: flex; align-items: center; gap: 8px; }
+      .inline input { width: auto; }
+      .delays { display: flex; gap: 12px; }
+      button {
+        background: #fe2c55;
+        color: #fff;
+        border: none;
+        padding: 10px 18px;
+        border-radius: 8px;
+        font-size: 14px;
+        cursor: pointer;
+      }
+      button.secondary { background: #eee; color: #333; }
+      .hint { color: #888; font-size: 12px; margin-top: 4px; }
+      #status { margin-top: 14px; font-size: 13px; color: #333; white-space: pre-wrap; }
+      hr { border: none; border-top: 1px solid #eee; margin: 24px 0; }
+    </style>
+  </head>
+  <body>
+    <h1>🔥 抖音自动续火花</h1>
+
+    <div class="row">
+      <label for="message">发送的消息内容</label>
+      <input type="text" id="message" placeholder="默认 1" />
+      <div class="hint">每天首次开 Chrome 时,自动发给所有有火花的好友。</div>
+    </div>
+
+    <div class="row">
+      <label class="inline"><input type="checkbox" id="enabled" /> 启用自动续火花</label>
+    </div>
+
+    <div class="row">
+      <label class="inline"><input type="checkbox" id="autoCloseTab" /> 完成后自动关闭抖音标签页</label>
+    </div>
+
+    <div class="row">
+      <label class="inline"><input type="checkbox" id="notify" /> 完成后弹出通知</label>
+    </div>
+
+    <div class="row">
+      <label>每条消息之间的间隔 (毫秒)</label>
+      <div class="delays">
+        <input type="number" id="minDelay" placeholder="最小" />
+        <input type="number" id="maxDelay" placeholder="最大" />
+      </div>
+      <div class="hint">拟人化随机间隔,避免发得太快。</div>
+    </div>
+
+    <div class="row">
+      <button id="save">保存设置</button>
+      <button id="run" class="secondary">立即测试运行</button>
+    </div>
+
+    <hr />
+    <div id="status"></div>
+
+    <script src="options.js"></script>
+  </body>
+</html>
