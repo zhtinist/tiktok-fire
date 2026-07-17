@@ -18,23 +18,31 @@ const DEFAULT_SETTINGS = {
 
 const NOTIFY_ICON = chrome.runtime.getURL("icons/icon128.png");
 
-// ---- 日志:同时写 console 和 storage(设置页可查看/复制)----
-async function log(line) {
+// ---- 日志:串行队列写入,避免并发"读-改-写"互相覆盖丢日志 ----
+let logQueue = Promise.resolve();
+function log(line) {
   const time = new Date().toLocaleTimeString();
   const entry = `[${time}] ${line}`;
   console.log("[续火花]", line);
-  try {
-    const { logs = [] } = await chrome.storage.local.get("logs");
-    logs.push(entry);
-    while (logs.length > 500) logs.shift();
-    await chrome.storage.local.set({ logs });
-  } catch (e) {}
+  logQueue = logQueue.then(async () => {
+    try {
+      const { logs = [] } = await chrome.storage.local.get("logs");
+      logs.push(entry);
+      while (logs.length > 2000) logs.shift();
+      await chrome.storage.local.set({ logs });
+    } catch (e) {}
+  });
+  return logQueue;
 }
 
 // 把全部日志导出成下载目录里的固定文件(覆盖写),方便自动读取
 const LOG_FILENAME = "tiktok-fire-log.txt";
 async function exportLogs() {
   try {
+    // 等待队列写完,并留一点时间接收内容脚本最后几条日志
+    await logQueue;
+    await new Promise((r) => setTimeout(r, 500));
+    await logQueue;
     const { logs = [] } = await chrome.storage.local.get("logs");
     const header =
       `# 抖音自动续火花 运行日志\n# 导出时间: ${new Date().toLocaleString()}\n` +

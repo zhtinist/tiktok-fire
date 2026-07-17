@@ -165,6 +165,29 @@ function diagnose() {
     const c = document.querySelectorAll(`[class*="${kw}"]`).length;
     if (c) clog(`class 含 "${kw}" 的元素: ${c}`);
   });
+
+  // 采样会话容器的 className 分布(重复次数≈会话数的那个,基本就是会话行)
+  const convEls = Array.from(
+    document.querySelectorAll('[class*="conversation"], [class*="session"], [class*="chat"]')
+  );
+  const freq = {};
+  convEls.forEach((el) => {
+    const c = typeof el.className === "string" ? el.className.trim() : "";
+    if (c) freq[c] = (freq[c] || 0) + 1;
+  });
+  const top = Object.entries(freq).sort((a, b) => b[1] - a[1]).slice(0, 15);
+  clog("className 分布(出现次数 x className):");
+  top.forEach(([c, n]) => clog(`  x${n}  ${c}`));
+
+  // 转储一个"重复出现"的元素 outerHTML —— 很可能是单个会话项
+  const repeated = top.find(([c, n]) => n >= 2 && n <= 80);
+  if (repeated) {
+    const sample = convEls.find((el) => el.className === repeated[0]);
+    if (sample) {
+      const html = (sample.outerHTML || "").replace(/\s+/g, " ").slice(0, 1200);
+      clog(`样本会话项 outerHTML(截断): ${html}`);
+    }
+  }
   clog("—— DOM 诊断结束 ——");
 }
 
