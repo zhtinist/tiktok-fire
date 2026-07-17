@@ -17,12 +17,8 @@ const DEFAULT_SETTINGS = {
   notify: true, // 完成后弹通知
 };
 
-// 通知图标(内联 data URI,免去额外图标文件,Chrome/Edge 均支持)
-const NOTIFY_ICON =
-  "data:image/svg+xml," +
-  encodeURIComponent(
-    '<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96"><rect width="96" height="96" rx="20" fill="#fe2c55"/><text x="48" y="68" font-size="56" text-anchor="middle">🔥</text></svg>'
-  );
+// 通知图标(复用插件图标)
+const NOTIFY_ICON = chrome.runtime.getURL("icons/icon128.png");
 
 // 组装并弹出完成通知
 function showNotification(result) {
