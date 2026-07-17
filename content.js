@@ -209,27 +209,77 @@ function typeInto(el, text) {
   }
 }
 
-// 触发发送:优先点发送按钮,否则模拟回车
-function doSend(inputEl, container) {
-  const btn =
-    pick(CONFIG.sendButton, container || document) || findByText(CONFIG.sendButtonText);
+// 触发发送:优先点可点击的发送按钮,否则在输入框上派发回车
+function doSend(inputEl) {
+  // 1) 找一个"真的能点"的发送按钮(防 DOM clobbering 导致 click 不是函数)
+  let btn = null;
+  for (const sel of CONFIG.sendButton) {
+    try {
+      const e = document.querySelector(sel);
+      if (e && typeof e.click === "function") {
+        btn = e;
+        break;
+      }
+    } catch (err) {}
+  }
+  if (!btn) {
+    const t = findByText(CONFIG.sendButtonText);
+    if (t && typeof t.click === "function") btn = t;
+  }
   if (btn) {
     btn.click();
-    return true;
+    return "button";
   }
-  // 回车兜底
+  // 2) 回退:在输入框上派发回车(keydown 通常足够触发发送)
+  const opts = {
+    key: "Enter",
+    code: "Enter",
+    keyCode: 13,
+    which: 13,
+    bubbles: true,
+    cancelable: true,
+  };
   for (const type of ["keydown", "keypress", "keyup"]) {
-    inputEl.dispatchEvent(
-      new KeyboardEvent(type, {
-        key: "Enter",
-        code: "Enter",
-        keyCode: 13,
-        which: 13,
-        bubbles: true,
-      })
-    );
+    inputEl.dispatchEvent(new KeyboardEvent(type, opts));
   }
-  return true;
+  return "enter";
+}
+
+// 聊天区诊断:dump 输入框与发送按钮的真实结构
+let chatDiagnosed = false;
+function diagnoseChat(tag) {
+  clog(`—— 聊天区诊断(${tag})——`);
+  const editables = document.querySelectorAll('[contenteditable="true"]');
+  const tas = document.querySelectorAll("textarea");
+  clog(`contenteditable: ${editables.length} 个, textarea: ${tas.length} 个`);
+
+  const input = pick(CONFIG.chatInput);
+  if (input) {
+    clog(`输入框链路: ${classChain(input)}`);
+    let box = input;
+    for (let i = 0; i < 5 && box.parentElement; i++) box = box.parentElement;
+    clog(`输入区容器 outerHTML(截断3000): ${(box.outerHTML || "").replace(/\s+/g, " ").slice(0, 3000)}`);
+  } else {
+    clog("未找到输入框");
+    // dump 页面右侧/底部可能的输入容器
+    ["input", "editor", "footer", "send"].forEach((kw) => {
+      const c = document.querySelectorAll(`[class*="${kw}"]`).length;
+      if (c) clog(`class 含 "${kw}" 的元素: ${c}`);
+    });
+  }
+
+  const sendEls = Array.from(
+    document.querySelectorAll('button, [role="button"], span, div')
+  )
+    .filter((e) => {
+      const t = (e.innerText || "").trim();
+      return t === "发送" || (t.length <= 6 && t.includes("发送"));
+    })
+    .slice(0, 5);
+  clog(`含"发送"文字的元素: ${sendEls.length}`);
+  sendEls.forEach((e, i) =>
+    clog(`发送候选#${i} <${e.tagName.toLowerCase()}> 链路: ${classChain(e)}`)
+  );
 }
 
 // 从会话项里尽量提取"好友昵称"
@@ -326,19 +376,27 @@ async function run(settings) {
         const name = extractName(item);
         clog(`→ 打开会话: ${name}`);
         item.click();
-        await sleep(1500);
+        await sleep(2500);
 
         // 找到输入框
-        const input = await waitFor(() => pick(CONFIG.chatInput), { timeout: 8000 });
+        const input = await waitFor(() => pick(CONFIG.chatInput), { timeout: 10000 });
+
+        // 第一个会话打开后做一次聊天区诊断(定位输入框/发送按钮)
+        if (!chatDiagnosed) {
+          chatDiagnosed = true;
+          diagnoseChat(input ? "已找到输入框" : "未找到输入框");
+        }
+
         if (!input) {
           clog(`  ✗ 未找到输入框,跳过 ${name}`);
           continue;
         }
 
         typeInto(input, message);
-        await sleep(500);
-        const sent = doSend(input, input.closest('[class*="chat"], [class*="conversation"]'));
-        clog(`  ✓ 已向 ${name} 发送(方式=${sent ? "ok" : "fail"})`);
+        await sleep(600);
+        const how = doSend(input);
+        await sleep(800);
+        clog(`  ✓ 已向 ${name} 发送(方式=${how})`);
         report.sent++;
         report.names.push(name);
 
