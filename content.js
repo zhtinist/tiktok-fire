@@ -15,8 +15,8 @@ const CONFIG = {
   ],
   // 会话列表里"单个会话"的候选选择器
   conversationItem: [
+    '[class*="ConversationItemwrapper"]',
     '[data-e2e="chat-list-item"]',
-    '[class*="conversation"] [class*="item"]',
     '[class*="sessionItem"]',
     'li[class*="session"]',
   ],
@@ -179,15 +179,15 @@ function diagnose() {
   clog("className 分布(出现次数 x className):");
   top.forEach(([c, n]) => clog(`  x${n}  ${c}`));
 
-  // 转储一个"重复出现"的元素 outerHTML —— 很可能是单个会话项
-  const repeated = top.find(([c, n]) => n >= 2 && n <= 80);
-  if (repeated) {
-    const sample = convEls.find((el) => el.className === repeated[0]);
-    if (sample) {
-      const html = (sample.outerHTML || "").replace(/\s+/g, " ").slice(0, 1200);
-      clog(`样本会话项 outerHTML(截断): ${html}`);
-    }
-  }
+  // 转储整个会话项 wrapper 的 outerHTML(找火花标记用)
+  const wrappers = Array.from(
+    document.querySelectorAll('[class*="ConversationItemwrapper"]')
+  );
+  clog(`会话项 wrapper 数: ${wrappers.length}`);
+  wrappers.slice(0, 12).forEach((w, i) => {
+    const html = (w.outerHTML || "").replace(/\s+/g, " ").slice(0, 2000);
+    clog(`会话项#${i} outerHTML(截断2000): ${html}`);
+  });
   clog("—— DOM 诊断结束 ——");
 }
 
@@ -234,10 +234,12 @@ function doSend(inputEl, container) {
 
 // 从会话项里尽量提取"好友昵称"
 function extractName(el) {
-  // 优先找 class 里带 name/nickname/title 的元素
-  const cand = el.querySelector(
-    '[class*="nickname"], [class*="name"], [class*="title"], [class*="user"]'
-  );
+  // 抖音昵称在 conversationConversationItemtitle(排除 titleWrapper)
+  let cand =
+    Array.from(el.querySelectorAll('[class*="ConversationItemtitle"]')).find(
+      (n) => !/Wrapper/i.test(n.className)
+    ) ||
+    el.querySelector('[class*="nickname"], [class*="name"], [class*="title"], [class*="user"]');
   let name = cand ? (cand.innerText || cand.textContent || "").trim() : "";
   if (!name) {
     // 兜底:取 innerText 第一行(通常是昵称)
